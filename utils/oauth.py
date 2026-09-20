@@ -29,7 +29,7 @@ def get_authorization_url() -> str:
     flow = get_oauth_flow()
     auth_url, _ = flow.authorization_url(
         access_type='offline',
-        prompt='consent',
+        prompt='select_account',  # ← إظهار نافذة اختيار الحساب دائماً
         include_granted_scopes='true'
     )
     return auth_url
@@ -67,7 +67,6 @@ def load_credentials():
         client_secret=data.get("client_secret"),
         scopes=data.get("scopes")
     )
-    # تجديد تلقائي إذا انتهت صلاحية التوكن
     if not creds.valid and creds.refresh_token:
         try:
             creds.refresh(Request())
