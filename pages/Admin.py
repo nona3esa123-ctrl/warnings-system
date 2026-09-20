@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from utils.auth import init_session, hash_password
+from utils.auth import init_session, hash_password, admin_reset_password
 from utils.sheets import read_tab, append_row, update_row, delete_row, log_action
 from utils.drive import list_student_files, delete_file, rename_file
 
@@ -25,7 +25,6 @@ if c3.button("🚪 تسجيل الخروج", use_container_width=True):
 
 st.markdown("---")
 
-# تعريف التبويبات
 tab1, tab2, tab3, tab4 = st.tabs(["📁 ملفات الطلاب", "👥 الموظفون", "✍️ التوقيعات", "📜 سجل النشاط"])
 
 # ============ 1. ملفات الطلاب ============
@@ -35,10 +34,10 @@ with tab1:
     st.info("""
     ### 📤 لرفع ملف طلاب جديد:
     1. افتح **Google Drive** → مجلد **الإنذارات_الجديد**.
-    2. اسحب ملف `.xlsx` وأفلته داخل المجلد (أو استخدم زر "New").
-    3. ارجع إلى هنا واضغط **🔄 تحديث القائمة** بالأسفل.
+    2. اسحب ملف `.xlsx` وأفلته داخل المجلد.
+    3. ارجع إلى هنا واضغط **🔄 تحديث القائمة**.
     
-    ⚠️ **تنبيه**: لا يمكن الرفع من داخل التطبيق لأن حساب النظام (Service Account) لا يملك مساحة تخزين. الرفع يجب أن يتم يدوياً عبر Drive.
+    ⚠️ **تنبيه**: الرفع من داخل التطبيق غير متاح (Service Account لا يملك مساحة).
     """)
     
     if st.button("🔄 تحديث القائمة", use_container_width=True):
@@ -50,7 +49,7 @@ with tab1:
     
     files = list_student_files()
     if not files:
-        st.warning("لا توجد ملفات طلاب في المجلد بعد. ارفع ملفاتك عبر Google Drive.")
+        st.warning("لا توجد ملفات طلاب في المجلد بعد.")
     else:
         for f in files:
             col1, col2, col3 = st.columns([6, 1, 1])
@@ -65,7 +64,6 @@ with tab1:
                 if st.button("🗑️ حذف", key=f"delete_{f['id']}"):
                     st.session_state[f"deleting_{f['id']}"] = True
             
-            # نموذج التسمية
             if st.session_state.get(f"renaming_{f['id']}"):
                 new_name = st.text_input("الاسم الجديد", value=f['name'], key=f"newname_{f['id']}")
                 c1, c2 = st.columns(2)
@@ -80,9 +78,8 @@ with tab1:
                     st.session_state[f"renaming_{f['id']}"] = False
                     st.rerun()
             
-            # تأكيد الحذف
             if st.session_state.get(f"deleting_{f['id']}"):
-                st.warning(f"⚠️ هل أنت متأكد من حذف **{f['name']}**؟ لا يمكن التراجع!")
+                st.warning(f"⚠️ حذف **{f['name']}**؟ لا يمكن التراجع!")
                 c1, c2 = st.columns(2)
                 if c1.button("✅ نعم احذف", key=f"confirm_del_{f['id']}", use_container_width=True, type="primary"):
                     if delete_file(f['id']):
@@ -111,7 +108,7 @@ with tab2:
             if new_email and new_name and new_password:
                 users_df = read_tab("users")
                 if not users_df.empty and new_email in users_df["الإيميل"].astype(str).values:
-                    st.error("⚠️ هذا البريد موجود بالفعل")
+                    st.error("⚠️ البريد موجود بالفعل")
                 else:
                     append_row("users", {
                         "الإيميل": new_email,
@@ -135,19 +132,50 @@ with tab2:
         for idx, row in users_df.iterrows():
             real_row_num = idx + 2
             with st.container():
-                c1, c2, c3, c4 = st.columns([4, 3, 2, 1])
+                c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 1, 1])
                 c1.write(f"📧 **{row['الإيميل']}**")
                 c2.write(f"👤 {row['الاسم']}")
                 c3.write(f"🏷️ {row['الدور']}")
                 
-                if row['الإيميل'] == user['email']:
-                    c4.write("🔒 (أنت)")
+                is_self = row['الإيميل'] == user['email']
+                
+                if is_self:
+                    c4.write("🔒")
+                    c5.write("(أنت)")
                 else:
-                    if c4.button("🗑️ حذف", key=f"del_user_{idx}"):
+                    if c4.button("🔑", key=f"reset_pw_{idx}", help="إعادة تعيين كلمة المرور"):
+                        st.session_state[f"resetting_pw_{idx}"] = True
+                    if c5.button("🗑️", key=f"del_user_{idx}", help="حذف الموظف"):
                         st.session_state[f"confirm_del_user_{idx}"] = True
                     
+                    # نموذج إعادة تعيين كلمة المرور
+                    if st.session_state.get(f"resetting_pw_{idx}"):
+                        st.markdown(f"**🔑 إعادة تعيين كلمة المرور لـ {row['الاسم']}**")
+                        new_pw = st.text_input(
+                            "كلمة المرور الجديدة",
+                            type="password",
+                            key=f"new_pw_{idx}"
+                        )
+                        cc1, cc2 = st.columns(2)
+                        if cc1.button("✅ تعيين", key=f"confirm_reset_{idx}", use_container_width=True, type="primary"):
+                            if not new_pw or len(new_pw) < 6:
+                                st.error("⚠️ كلمة المرور 6 أحرف على الأقل")
+                            else:
+                                result = admin_reset_password(row['الإيميل'], new_pw)
+                                if "error" in result:
+                                    st.error(result["error"])
+                                else:
+                                    log_action("إعادة تعيين كلمة مرور", target=row['الإيميل'])
+                                    st.success(result["message"])
+                                    st.session_state[f"resetting_pw_{idx}"] = False
+                                    st.rerun()
+                        if cc2.button("❌ إلغاء", key=f"cancel_reset_{idx}", use_container_width=True):
+                            st.session_state[f"resetting_pw_{idx}"] = False
+                            st.rerun()
+                    
+                    # تأكيد الحذف
                     if st.session_state.get(f"confirm_del_user_{idx}"):
-                        st.warning(f"⚠️ سيتم حذف **{row['الاسم']}** نهائياً.")
+                        st.warning(f"⚠️ سيتم حذف **{row['الاسم']}** ({row['الإيميل']}) نهائياً.")
                         cc1, cc2 = st.columns(2)
                         if cc1.button("✅ نعم احذف", key=f"confirm_yes_{idx}", use_container_width=True, type="primary"):
                             try:
