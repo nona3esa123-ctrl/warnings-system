@@ -2,7 +2,10 @@ import streamlit as st
 import pandas as pd
 from utils.auth import init_session, hash_password, admin_reset_password
 from utils.sheets import read_tab, append_row, update_row, delete_row, log_action
-from utils.drive import list_student_files, delete_file, rename_file
+from utils.drive import (
+    list_student_files, list_converted_sheets,
+    convert_excel_to_sheets, delete_file, delete_converted_sheet, rename_file
+)
 
 st.set_page_config(page_title="لوحة المدير", page_icon="👑", layout="wide")
 init_session()
@@ -14,7 +17,6 @@ if not user or user["role"] != "مدير":
 
 st.title("👑 لوحة المدير")
 
-# شريط علوي
 c1, c2, c3 = st.columns(3)
 if c1.button("🏠 الصفحة الرئيسية", use_container_width=True):
     st.switch_page("app.py")
@@ -32,12 +34,14 @@ with tab1:
     st.markdown("### 📁 إدارة ملفات الطلاب")
     
     st.info("""
-    ### 📤 لرفع ملف طلاب جديد:
+    ### 📤 لرفع ملف جديد:
     1. افتح **Google Drive** → مجلد **الإنذارات_الجديد**.
-    2. اسحب ملف `.xlsx` وأفلته داخل المجلد.
-    3. ارجع إلى هنا واضغط **🔄 تحديث القائمة**.
+    2. اسحب ملف `.xlsx` وأفلته.
+    3. اضغط **🔄 تحديث القائمة**.
     
-    ⚠️ **تنبيه**: الرفع من داخل التطبيق غير متاح (Service Account لا يملك مساحة).
+    ### ⚡ لتسريع البحث:
+    اضغط **"تحويل"** بجانب أي ملف Excel → سيتم إنشاء نسخة Google Sheets.
+    **الملف الأصلي يبقى محفوظاً** — النظام يقرأ من النسخة السريعة.
     """)
     
     if st.button("🔄 تحديث القائمة", use_container_width=True):
@@ -45,54 +49,113 @@ with tab1:
         st.rerun()
     
     st.markdown("---")
+    
+    # زر التحويل الشامل
+    excel_files = list_student_files()
+    converted = list_converted_sheets()
+    converted_names = {f['name'] for f in converted}
+    
+    # تحقق من الملفات غير المحوّلة
+    not_converted = []
+    for ex in excel_files:
+        base = ex['name']
+        for ext in ['.xlsx', '.xls', '.XLSX', '.XLS']:
+            base = base.replace(ext, '')
+        if f"GS_{base}" not in converted_names:
+            not_converted.append(ex)
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if not_converted:
+            if st.button(f"⚡ تحويل كل الملفات ({len(not_converted)})", use_container_width=True, type="primary"):
+                progress = st.progress(0)
+                success_count = 0
+                for i, ex in enumerate(not_converted):
+                    result = convert_excel_to_sheets(ex['id'], ex['name'])
+                    if "success" in result:
+                        success_count += 1
+                        log_action("تحويل Excel → Sheets", target=ex['name'], details=result['name'])
+                    progress.progress((i + 1) / len(not_converted))
+                st.cache_data.clear()
+                st.success(f"✅ تم تحويل {success_count} من {len(not_converted)} ملف")
+                st.rerun()
+        else:
+            st.success("✅ كل الملفات محوّلة إلى Google Sheets")
+    with col_b:
+        st.metric("📄 ملفات Excel", len(excel_files))
+        st.metric("📗 Google Sheets", len(converted))
+    
+    st.markdown("---")
     st.markdown("### 📋 الملفات الحالية")
     
-    files = list_student_files()
-    if not files:
-        st.warning("لا توجد ملفات طلاب في المجلد بعد.")
+    if not excel_files:
+        st.warning("لا توجد ملفات Excel في المجلد.")
     else:
-        for f in files:
-            col1, col2, col3 = st.columns([6, 1, 1])
-            with col1:
-                size = int(f.get('size', 0)) / 1024
-                modified = f.get('modifiedTime', '')[:10]
-                st.write(f"📄 **{f['name']}** — {size:.0f} KB — آخر تعديل: {modified}")
-            with col2:
-                if st.button("✏️ تسمية", key=f"rename_{f['id']}"):
-                    st.session_state[f"renaming_{f['id']}"] = True
-            with col3:
-                if st.button("🗑️ حذف", key=f"delete_{f['id']}"):
-                    st.session_state[f"deleting_{f['id']}"] = True
+        for ex in excel_files:
+            base = ex['name']
+            for ext in ['.xlsx', '.xls', '.XLSX', '.XLS']:
+                base = base.replace(ext, '')
+            gs_name = f"GS_{base}"
+            gs_file = next((f for f in converted if f['name'] == gs_name), None)
             
-            if st.session_state.get(f"renaming_{f['id']}"):
-                new_name = st.text_input("الاسم الجديد", value=f['name'], key=f"newname_{f['id']}")
-                c1, c2 = st.columns(2)
-                if c1.button("✅ حفظ", key=f"save_rename_{f['id']}", use_container_width=True):
-                    if rename_file(f['id'], new_name):
-                        log_action("إعادة تسمية ملف", target=f['name'], details=f"→ {new_name}")
-                        st.session_state[f"renaming_{f['id']}"] = False
-                        st.cache_data.clear()
-                        st.success("✅ تم التحديث")
+            with st.container():
+                c1, c2, c3, c4 = st.columns([4, 2, 1, 1])
+                
+                with c1:
+                    size = int(ex.get('size', 0)) / 1024
+                    st.write(f"📄 **{ex['name']}** — {size:.0f} KB")
+                
+                with c2:
+                    if gs_file:
+                        st.success(f"✅ محوّل → Sheets")
+                    else:
+                        st.warning("⚠️ غير محوّل")
+                
+                with c3:
+                    if not gs_file:
+                        if st.button("⚡ تحويل", key=f"conv_{ex['id']}", use_container_width=True):
+                            with st.spinner("جاري التحويل..."):
+                                result = convert_excel_to_sheets(ex['id'], ex['name'])
+                                if "success" in result:
+                                    log_action("تحويل Excel → Sheets", target=ex['name'])
+                                    st.cache_data.clear()
+                                    st.success(f"✅ تم")
+                                    st.rerun()
+                                else:
+                                    st.error(result.get("error", "فشل"))
+                    else:
+                        if st.button("🗑️ حذف النسخة", key=f"del_gs_{ex['id']}", use_container_width=True, help="حذف نسخة Sheets فقط (يبقى Excel)"):
+                            if delete_converted_sheet(gs_file['id']):
+                                log_action("حذف نسخة Sheets", target=gs_name)
+                                st.cache_data.clear()
+                                st.success("✅")
+                                st.rerun()
+                
+                with c4:
+                    if st.button("🗑️ حذف الكل", key=f"del_all_{ex['id']}", use_container_width=True, help="حذف Excel + نسخة Sheets"):
+                        st.session_state[f"confirm_del_all_{ex['id']}"] = True
+                
+                # تأكيد حذف الكل
+                if st.session_state.get(f"confirm_del_all_{ex['id']}"):
+                    st.error(f"⚠️ سيتم حذف **{ex['name']}** و**{gs_name if gs_file else ''}** نهائياً!")
+                    cc1, cc2 = st.columns(2)
+                    if cc1.button("✅ نعم احذف الكل", key=f"yes_all_{ex['id']}", use_container_width=True, type="primary"):
+                        try:
+                            if gs_file:
+                                delete_converted_sheet(gs_file['id'])
+                            delete_file(ex['id'])
+                            log_action("حذف ملف كامل", target=ex['name'])
+                            st.session_state[f"confirm_del_all_{ex['id']}"] = False
+                            st.cache_data.clear()
+                            st.success("✅ تم الحذف")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"خطأ: {e}")
+                    if cc2.button("❌ إلغاء", key=f"no_all_{ex['id']}", use_container_width=True):
+                        st.session_state[f"confirm_del_all_{ex['id']}"] = False
                         st.rerun()
-                if c2.button("❌ إلغاء", key=f"cancel_rename_{f['id']}", use_container_width=True):
-                    st.session_state[f"renaming_{f['id']}"] = False
-                    st.rerun()
-            
-            if st.session_state.get(f"deleting_{f['id']}"):
-                st.warning(f"⚠️ حذف **{f['name']}**؟ لا يمكن التراجع!")
-                c1, c2 = st.columns(2)
-                if c1.button("✅ نعم احذف", key=f"confirm_del_{f['id']}", use_container_width=True, type="primary"):
-                    if delete_file(f['id']):
-                        log_action("حذف ملف طلاب", target=f['name'])
-                        st.session_state[f"deleting_{f['id']}"] = False
-                        st.cache_data.clear()
-                        st.success("✅ تم الحذف")
-                        st.rerun()
-                if c2.button("❌ إلغاء", key=f"cancel_del_{f['id']}", use_container_width=True):
-                    st.session_state[f"deleting_{f['id']}"] = False
-                    st.rerun()
-            
-            st.markdown("---")
+                
+                st.markdown("---")
 
 # ============ 2. الموظفون ============
 with tab2:
@@ -148,14 +211,9 @@ with tab2:
                     if c5.button("🗑️", key=f"del_user_{idx}", help="حذف الموظف"):
                         st.session_state[f"confirm_del_user_{idx}"] = True
                     
-                    # نموذج إعادة تعيين كلمة المرور
                     if st.session_state.get(f"resetting_pw_{idx}"):
                         st.markdown(f"**🔑 إعادة تعيين كلمة المرور لـ {row['الاسم']}**")
-                        new_pw = st.text_input(
-                            "كلمة المرور الجديدة",
-                            type="password",
-                            key=f"new_pw_{idx}"
-                        )
+                        new_pw = st.text_input("كلمة المرور الجديدة", type="password", key=f"new_pw_{idx}")
                         cc1, cc2 = st.columns(2)
                         if cc1.button("✅ تعيين", key=f"confirm_reset_{idx}", use_container_width=True, type="primary"):
                             if not new_pw or len(new_pw) < 6:
@@ -173,9 +231,8 @@ with tab2:
                             st.session_state[f"resetting_pw_{idx}"] = False
                             st.rerun()
                     
-                    # تأكيد الحذف
                     if st.session_state.get(f"confirm_del_user_{idx}"):
-                        st.warning(f"⚠️ سيتم حذف **{row['الاسم']}** ({row['الإيميل']}) نهائياً.")
+                        st.warning(f"⚠️ سيتم حذف **{row['الاسم']}** نهائياً.")
                         cc1, cc2 = st.columns(2)
                         if cc1.button("✅ نعم احذف", key=f"confirm_yes_{idx}", use_container_width=True, type="primary"):
                             try:
@@ -194,8 +251,6 @@ with tab2:
 # ============ 3. التوقيعات ============
 with tab3:
     st.markdown("### ✍️ التوقيعات المسجلة")
-    st.caption("قائمة بكل الطلاب الذين وقّعوا على علم الإنذار.")
-    
     sig_df = read_tab("signatures")
     if sig_df.empty:
         st.info("لا توجد توقيعات مسجلة بعد")
@@ -203,7 +258,6 @@ with tab3:
         c1, c2 = st.columns(2)
         with c1:
             search = st.text_input("🔍 ابحث بالرقم القومي أو الموظف", key="sig_search")
-        
         if search:
             mask = sig_df.astype(str).apply(
                 lambda r: r.str.contains(search, case=False, na=False).any(), axis=1
@@ -211,10 +265,8 @@ with tab3:
             filtered = sig_df[mask]
         else:
             filtered = sig_df
-        
         st.markdown(f"**العدد: {len(filtered)} توقيع**")
         st.dataframe(filtered, use_container_width=True)
-        
         csv = filtered.to_csv(index=False).encode("utf-8-sig")
         st.download_button("📥 تحميل CSV", csv, "signatures.csv", "text/csv", use_container_width=True)
 
