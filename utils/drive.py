@@ -1,7 +1,10 @@
 import streamlit as st
 import io
+import os
+import tempfile
 import pandas as pd
 from utils.sheets import get_drive_service
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 
 def list_student_files():
@@ -11,7 +14,9 @@ def list_student_files():
     query = f"'{folder_id}' in parents and trashed=false"
     results = drive.files().list(
         q=query,
-        fields="files(id, name, mimeType, size, modifiedTime)"
+        fields="files(id, name, mimeType, size, modifiedTime)",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True
     ).execute()
     files = results.get('files', [])
     result = []
@@ -28,7 +33,6 @@ def read_excel_from_drive(file_id: str) -> pd.DataFrame:
     drive = get_drive_service()
     request = drive.files().get_media(fileId=file_id)
     fh = io.BytesIO()
-    from googleapiclient.http import MediaIoBaseDownload
     downloader = MediaIoBaseDownload(fh, request)
     done = False
     while not done:
@@ -39,29 +43,51 @@ def read_excel_from_drive(file_id: str) -> pd.DataFrame:
 
 
 def upload_file_to_folder(file_bytes: bytes, filename: str) -> str:
-    """رفع ملف Excel إلى المجلد"""
-    from googleapiclient.http import MediaIoBaseUpload
+    """رفع ملف Excel إلى المجلد (بطريقة آمنة)"""
     folder_id = st.secrets["settings"]["folder_id"]
     drive = get_drive_service()
-    file_metadata = {
-        'name': filename,
-        'parents': [folder_id]
-    }
-    media = MediaIoBaseUpload(
-        io.BytesIO(file_bytes),
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
-    file = drive.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields='id'
-    ).execute()
-    return file.get('id')
+    
+    # كتابة الملف في ملف مؤقت
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        
+        file_metadata = {
+            'name': filename,
+            'parents': [folder_id]
+        }
+        
+        media = MediaFileUpload(
+            tmp_path,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            resumable=False
+        )
+        
+        file = drive.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id',
+            supportsAllDrives=True
+        ).execute()
+        
+        return file.get('id')
+    finally:
+        # تنظيف الملف المؤقت
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 def delete_file(file_id: str) -> bool:
     try:
-        get_drive_service().files().delete(fileId=file_id).execute()
+        get_drive_service().files().delete(
+            fileId=file_id,
+            supportsAllDrives=True
+        ).execute()
         return True
     except Exception as e:
         st.error(f"خطأ في الحذف: {e}")
@@ -72,7 +98,8 @@ def rename_file(file_id: str, new_name: str) -> bool:
     try:
         get_drive_service().files().update(
             fileId=file_id,
-            body={'name': new_name}
+            body={'name': new_name},
+            supportsAllDrives=True
         ).execute()
         return True
     except Exception as e:
