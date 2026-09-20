@@ -5,15 +5,15 @@ import requests
 import pandas as pd
 from google.auth.transport.requests import Request
 from utils.sheets import get_drive_service, get_creds, get_gspread_client
+from utils.oauth import load_credentials
 
 
 def list_student_files():
-    """قائمة ملفات Excel الأصلية في المجلد"""
+    """قائمة ملفات Excel الأصلية (بـ Service Account)"""
     folder_id = st.secrets["settings"]["folder_id"]
     drive = get_drive_service()
     query = f"'{folder_id}' in parents and trashed=false"
-    max_attempts = 3
-    for attempt in range(max_attempts):
+    for attempt in range(3):
         try:
             results = drive.files().list(
                 q=query,
@@ -32,14 +32,14 @@ def list_student_files():
                     result.append(f)
             return result
         except Exception as e:
-            if attempt < max_attempts - 1:
+            if attempt < 2:
                 time.sleep(2)
                 continue
             return []
 
 
 def list_converted_sheets():
-    """قائمة ملفات Google Sheets المحوّلة (تبدأ بـ GS_)"""
+    """قائمة ملفات Google Sheets المحوّلة"""
     folder_id = st.secrets["settings"]["folder_id"]
     drive = get_drive_service()
     query = f"'{folder_id}' in parents and trashed=false and mimeType='application/vnd.google-apps.spreadsheet'"
@@ -51,31 +51,66 @@ def list_converted_sheets():
             includeItemsFromAllDrives=True
         ).execute()
         files = results.get('files', [])
-        result = []
-        for f in files:
-            if f['name'].startswith('GS_'):
-                result.append(f)
-        return result
+        return [f for f in files if f['name'].startswith('GS_')]
     except Exception:
         return []
 
 
+def read_excel_from_drive(file_id: str) -> pd.DataFrame:
+    """قراءة ملف Excel بـ requests (بدون google-api-client)"""
+    last_error = None
+    for attempt in range(3):
+        try:
+            creds = get_creds()
+            if not creds.valid:
+                creds.refresh(Request())
+            url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&supportsAllDrives=true"
+            headers = {"Authorization": f"Bearer {creds.token}"}
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            return pd.read_excel(io.BytesIO(response.content), header=7)
+        except Exception as e:
+            last_error = e
+            if attempt < 2:
+                time.sleep(2)
+                continue
+            raise last_error
+    raise last_error
+
+
+def read_sheet_by_id(file_id: str) -> pd.DataFrame:
+    """قراءة Google Sheets بواسطة ID (سريع)"""
+    client = get_gspread_client()
+    sh = client.open_by_key(file_id)
+    ws = sh.sheet1
+    all_values = ws.get_all_values()
+    if len(all_values) < 8:
+        return pd.DataFrame()
+    headers = all_values[7]
+    data = all_values[8:]
+    return pd.DataFrame(data, columns=headers)
+
+
 def convert_excel_to_sheets(excel_file_id: str, excel_name: str) -> dict:
-    """تحويل ملف Excel إلى Google Sheets (تبقى النسخة الأصلية)"""
-    drive = get_drive_service()
+    """تحويل Excel → Google Sheets باستخدام OAuth (يستخدم مساحة المدير)"""
+    creds = load_credentials()
+    if not creds:
+        return {"error": "🔐 يجب تسجيل الدخول بحساب Google أولاً (من لوحة المدير)"}
+    
+    from googleapiclient.discovery import build
+    drive = build('drive', 'v3', credentials=creds)
     folder_id = st.secrets["settings"]["folder_id"]
     
-    # اسم النسخة الجديدة
     base_name = excel_name
     for ext in ['.xlsx', '.xls', '.XLSX', '.XLS']:
         base_name = base_name.replace(ext, '')
     new_name = f"GS_{base_name}"
     
-    # تحقق إن كانت النسخة موجودة
+    # تحقق إن كانت موجودة
     existing = list_converted_sheets()
     for f in existing:
         if f['name'] == new_name:
-            return {"error": f"⚠️ النسخة موجودة مسبقاً: {new_name}", "id": f['id']}
+            return {"error": f"⚠️ موجودة مسبقاً: {new_name}", "id": f['id']}
     
     try:
         body = {
@@ -93,56 +128,7 @@ def convert_excel_to_sheets(excel_file_id: str, excel_name: str) -> dict:
         return {"error": f"❌ فشل التحويل: {e}"}
 
 
-def read_excel_from_drive(file_id: str) -> pd.DataFrame:
-    """قراءة ملف Excel باستخدام requests مباشرة"""
-    last_error = None
-    for attempt in range(5):
-        try:
-            creds = get_creds()
-            if not creds.valid:
-                creds.refresh(Request())
-            url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&supportsAllDrives=true"
-            headers = {"Authorization": f"Bearer {creds.token}"}
-            response = requests.get(url, headers=headers, timeout=60)
-            response.raise_for_status()
-            return pd.read_excel(io.BytesIO(response.content), header=7)
-        except Exception as e:
-            last_error = e
-            if attempt < 4:
-                time.sleep(2 ** attempt)
-                continue
-            raise last_error
-    raise last_error
-
-
-def read_sheet_by_id(file_id: str) -> pd.DataFrame:
-    """قراءة Google Sheets بواسطة ID (بدون تحميل)"""
-    client = get_gspread_client()
-    sh = client.open_by_key(file_id)
-    ws = sh.sheet1
-    all_values = ws.get_all_values()
-    if len(all_values) < 8:
-        return pd.DataFrame()
-    headers = all_values[7]
-    data = all_values[8:]
-    df = pd.DataFrame(data, columns=headers)
-    return df
-
-
 def delete_file(file_id: str) -> bool:
-    try:
-        get_drive_service().files().delete(
-            fileId=file_id,
-            supportsAllDrives=True
-        ).execute()
-        return True
-    except Exception as e:
-        st.error(f"خطأ في الحذف: {e}")
-        return False
-
-
-def delete_converted_sheet(file_id: str) -> bool:
-    """حذف نسخة Google Sheets"""
     try:
         get_drive_service().files().delete(
             fileId=file_id,
