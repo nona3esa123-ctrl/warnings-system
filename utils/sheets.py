@@ -34,7 +34,7 @@ def get_or_create_system_file():
     folder_id = st.secrets["settings"]["folder_id"]
     client = get_gspread_client()
     drive = get_drive_service()
-    
+
     # البحث عن الملف في المجلد
     try:
         results = drive.files().list(
@@ -49,31 +49,34 @@ def get_or_create_system_file():
     except Exception as e:
         st.error(f"خطأ في البحث عن الملف: {e}")
         return None
-    
-    # إنشاء ملف جديد
+
+    # إنشاء ملف Sheets جديد مباشرة في المجلد (باستخدام Drive API)
     try:
-        new_ss = client.create("بيانات_النظام")
-        
-        file = drive.files().get(fileId=new_ss.id, fields='parents').execute()
-        previous_parents = ",".join(file.get('parents', []))
-        drive.files().update(
-            fileId=new_ss.id,
-            addParents=folder_id,
-            removeParents=previous_parents,
-            fields='id, parents',
+        file_metadata = {
+            'name': 'بيانات_النظام',
+            'mimeType': 'application/vnd.google-apps.spreadsheet',
+            'parents': [folder_id]
+        }
+        new_file = drive.files().create(
+            body=file_metadata,
+            fields='id',
             supportsAllDrives=True
         ).execute()
-        
+
+        file_id = new_file.get('id')
+        new_ss = client.open_by_key(file_id)
+
+        # إعداد الأوراق
         sheet1 = new_ss.sheet1
         sheet1.update_title("users")
         sheet1.append_row(["الإيميل", "كلمة المرور", "الاسم", "الدور"])
-        
+
         ws_audit = new_ss.add_worksheet(title="audit", rows=1000, cols=10)
         ws_audit.append_row(["التاريخ", "الإيميل", "الاسم", "نوع العملية", "الهدف", "التفاصيل"])
-        
+
         ws_sig = new_ss.add_worksheet(title="signatures", rows=1000, cols=10)
         ws_sig.append_row(["الرقم القومي", "التاريخ", "الموظف", "ملاحظات"])
-        
+
         return new_ss
     except Exception as e:
         st.error(f"خطأ في إنشاء الملف: {e}")
