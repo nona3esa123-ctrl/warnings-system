@@ -29,40 +29,41 @@ def get_drive_service():
     return build('drive', 'v3', credentials=get_creds())
 
 
-@st.cache_resource
 def get_or_create_system_file():
     """الحصول على ملف 'بيانات_النظام' أو إنشاؤه تلقائياً"""
-   folder_id = st.secrets["settings"]["folder_id"]
+    folder_id = st.secrets["settings"]["folder_id"]
     client = get_gspread_client()
     drive = get_drive_service()
     
-    # البحث في المجلد
+    # البحث عن الملف في المجلد
     try:
         results = drive.files().list(
             q=f"name='بيانات_النظام' and '{folder_id}' in parents and trashed=false",
-            fields="files(id)"
+            fields="files(id, name)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
         ).execute()
         files = results.get('files', [])
         if files:
             return client.open_by_key(files[0]['id'])
-    except Exception:
-        pass
+    except Exception as e:
+        st.error(f"خطأ في البحث عن الملف: {e}")
+        return None
     
     # إنشاء ملف جديد
     try:
         new_ss = client.create("بيانات_النظام")
         
-        # نقله إلى المجلد
         file = drive.files().get(fileId=new_ss.id, fields='parents').execute()
         previous_parents = ",".join(file.get('parents', []))
         drive.files().update(
             fileId=new_ss.id,
             addParents=folder_id,
             removeParents=previous_parents,
-            fields='id, parents'
+            fields='id, parents',
+            supportsAllDrives=True
         ).execute()
         
-        # إعداد الأوراق
         sheet1 = new_ss.sheet1
         sheet1.update_title("users")
         sheet1.append_row(["الإيميل", "كلمة المرور", "الاسم", "الدور"])
@@ -75,11 +76,11 @@ def get_or_create_system_file():
         
         return new_ss
     except Exception as e:
-        st.error(f"خطأ في إنشاء ملف النظام: {e}")
+        st.error(f"خطأ في إنشاء الملف: {e}")
         return None
 
 
-def get_system_tab(tab_name: str):
+def get_system_tab(tab_name):
     ss = get_or_create_system_file()
     if ss is None:
         return None
@@ -89,7 +90,7 @@ def get_system_tab(tab_name: str):
         return None
 
 
-def read_tab(tab_name: str) -> pd.DataFrame:
+def read_tab(tab_name):
     try:
         ws = get_system_tab(tab_name)
         if ws is None:
@@ -101,7 +102,7 @@ def read_tab(tab_name: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def append_row(tab_name: str, row_dict: dict):
+def append_row(tab_name, row_dict):
     try:
         ws = get_system_tab(tab_name)
         if ws is None:
@@ -111,11 +112,11 @@ def append_row(tab_name: str, row_dict: dict):
         ws.append_row(row)
         return True
     except Exception as e:
-        st.error(f"خطأ: {e}")
+        st.error(f"خطأ في الإضافة: {e}")
         return False
 
 
-def update_row(tab_name: str, row_index: int, row_dict: dict):
+def update_row(tab_name, row_index, row_dict):
     try:
         ws = get_system_tab(tab_name)
         if ws is None:
@@ -125,11 +126,11 @@ def update_row(tab_name: str, row_index: int, row_dict: dict):
         ws.update(f"A{row_index}", [row])
         return True
     except Exception as e:
-        st.error(f"خطأ: {e}")
+        st.error(f"خطأ في التحديث: {e}")
         return False
 
 
-def delete_row(tab_name: str, row_index: int):
+def delete_row(tab_name, row_index):
     try:
         ws = get_system_tab(tab_name)
         if ws is None:
@@ -137,11 +138,11 @@ def delete_row(tab_name: str, row_index: int):
         ws.delete_rows(row_index)
         return True
     except Exception as e:
-        st.error(f"خطأ: {e}")
+        st.error(f"خطأ في الحذف: {e}")
         return False
 
 
-def log_action(action_type: str, target: str = "", details: str = ""):
+def log_action(action_type, target="", details=""):
     try:
         user = st.session_state.get("user")
         append_row("audit", {
