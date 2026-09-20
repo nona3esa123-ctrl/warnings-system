@@ -1,10 +1,8 @@
 import streamlit as st
 import io
-import os
-import tempfile
 import pandas as pd
 from utils.sheets import get_drive_service
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload
 
 
 def list_student_files():
@@ -42,47 +40,8 @@ def read_excel_from_drive(file_id: str) -> pd.DataFrame:
     return df
 
 
-def upload_file_to_folder(file_bytes: bytes, filename: str) -> str:
-    """رفع ملف Excel إلى المجلد (بطريقة آمنة)"""
-    folder_id = st.secrets["settings"]["folder_id"]
-    drive = get_drive_service()
-    
-    # كتابة الملف في ملف مؤقت
-    tmp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
-        
-        file_metadata = {
-            'name': filename,
-            'parents': [folder_id]
-        }
-        
-        media = MediaFileUpload(
-            tmp_path,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            resumable=False
-        )
-        
-        file = drive.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id',
-            supportsAllDrives=True
-        ).execute()
-        
-        return file.get('id')
-    finally:
-        # تنظيف الملف المؤقت
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
-
-
 def delete_file(file_id: str) -> bool:
+    """حذف ملف من Drive"""
     try:
         get_drive_service().files().delete(
             fileId=file_id,
@@ -95,6 +54,7 @@ def delete_file(file_id: str) -> bool:
 
 
 def rename_file(file_id: str, new_name: str) -> bool:
+    """إعادة تسمية ملف"""
     try:
         get_drive_service().files().update(
             fileId=file_id,
