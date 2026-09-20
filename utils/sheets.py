@@ -32,7 +32,7 @@ def get_drive_service():
 @st.cache_resource
 def get_or_create_system_file():
     """الحصول على ملف 'بيانات_النظام' أو إنشاؤه تلقائياً"""
-    folder_id = st.secrets["folder_id"]
+   folder_id = st.secrets["settings"]["folder_id"]
     client = get_gspread_client()
     drive = get_drive_service()
     
