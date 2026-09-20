@@ -1,17 +1,18 @@
 import streamlit as st
 import io
 import time
+import requests
 import pandas as pd
-from utils.sheets import get_drive_service
-from googleapiclient.http import MediaIoBaseDownload
+from google.auth.transport.requests import Request
+from utils.sheets import get_drive_service, get_creds
 
 
 def list_student_files():
-    """قائمة ملفات Excel في المجلد (مع إعادة المحاولة عند فشل SSL)"""
+    """قائمة ملفات Excel في المجلد (مع إعادة المحاولة)"""
     folder_id = st.secrets["settings"]["folder_id"]
     drive = get_drive_service()
     query = f"'{folder_id}' in parents and trashed=false"
-    
+
     max_attempts = 3
     for attempt in range(max_attempts):
         try:
@@ -33,42 +34,42 @@ def list_student_files():
             if attempt < max_attempts - 1:
                 time.sleep(2)
                 continue
-            st.error(f"خطأ في الوصول للمجلد بعد {max_attempts} محاولات: {e}")
+            st.error(f"خطأ في الوصول للمجلد: {e}")
             return []
 
 
-def download_file_with_retry(file_id: str, max_attempts: int = 3) -> io.BytesIO:
-    """تحميل ملف من Drive مع إعادة المحاولة عند فشل SSL"""
-    drive = get_drive_service()
-    
+def download_file_via_requests(file_id: str, max_attempts: int = 5) -> bytes:
+    """تحميل ملف من Google Drive باستخدام requests مباشرة (بدون google-api-client)"""
     last_error = None
     for attempt in range(max_attempts):
         try:
-            request = drive.files().get_media(fileId=file_id)
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request, chunksize=1024 * 1024)
-            done = False
-            while not done:
-                status, done = downloader.next_chunk()
-            fh.seek(0)
-            return fh
+            creds = get_creds()
+            if not creds.valid:
+                creds.refresh(Request())
+            
+            url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&supportsAllDrives=true"
+            headers = {"Authorization": f"Bearer {creds.token}"}
+            
+            response = requests.get(url, headers=headers, timeout=60)
+            response.raise_for_status()
+            return response.content
         except Exception as e:
             last_error = e
             if attempt < max_attempts - 1:
-                time.sleep(3)
+                time.sleep(2 ** attempt)  # تأخير تصاعدي: 1، 2، 4، 8 ثواني
                 continue
             raise last_error
+    raise last_error
 
 
 def read_excel_from_drive(file_id: str) -> pd.DataFrame:
-    """قراءة ملف Excel من Drive"""
-    fh = download_file_with_retry(file_id, max_attempts=3)
-    df = pd.read_excel(fh, header=7)
+    """قراءة ملف Excel من Drive باستخدام requests"""
+    file_bytes = download_file_via_requests(file_id, max_attempts=5)
+    df = pd.read_excel(io.BytesIO(file_bytes), header=7)
     return df
 
 
 def delete_file(file_id: str) -> bool:
-    """حذف ملف من Drive"""
     try:
         get_drive_service().files().delete(
             fileId=file_id,
@@ -81,7 +82,6 @@ def delete_file(file_id: str) -> bool:
 
 
 def rename_file(file_id: str, new_name: str) -> bool:
-    """إعادة تسمية ملف"""
     try:
         get_drive_service().files().update(
             fileId=file_id,
