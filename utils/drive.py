@@ -6,7 +6,7 @@ from utils.sheets import get_drive_service
 
 def list_student_files():
     """قائمة ملفات Excel في المجلد (باستثناء بيانات_النظام)"""
-    folder_id = st.secrets["folder_id"]
+    folder_id = st.secrets["settings"]["folder_id"]
     drive = get_drive_service()
     query = f"'{folder_id}' in parents and trashed=false"
     results = drive.files().list(
@@ -41,7 +41,7 @@ def read_excel_from_drive(file_id: str) -> pd.DataFrame:
 def upload_file_to_folder(file_bytes: bytes, filename: str) -> str:
     """رفع ملف Excel إلى المجلد"""
     from googleapiclient.http import MediaIoBaseUpload
-    folder_id = st.secrets["folder_id"]
+    folder_id = st.secrets["settings"]["folder_id"]
     drive = get_drive_service()
     file_metadata = {
         'name': filename,
