@@ -22,9 +22,11 @@ COL_MAP = {
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_all_students():
-    """تحميل جميع الطلاب من كل ملفات Excel في المجلد"""
+    """تحميل جميع الطلاب من كل ملفات Excel في المجلد (مع تجاهل الملفات الفاشلة)"""
     files = list_student_files()
     rows = []
+    failed_files = []
+    
     for f in files:
         try:
             df = read_excel_from_drive(f['id'])
@@ -33,7 +35,6 @@ def load_all_students():
                 for name, idx in COL_MAP.items():
                     try:
                         val = row.iloc[idx] if idx < len(row) else ""
-                        # تنظيف NaN
                         if pd.isna(val):
                             val = ""
                         student[name] = val
@@ -43,8 +44,16 @@ def load_all_students():
                     student["_file_name"] = f['name']
                     student["_file_id"] = f['id']
                     rows.append(student)
-        except Exception:
+        except Exception as e:
+            failed_files.append((f['name'], str(e)))
             continue
+    
+    # عرض تحذير بالملفات التي فشلت
+    if failed_files:
+        st.warning(f"⚠️ تعذّر تحميل {len(failed_files)} ملف (سيُعاد المحاولة تلقائياً):")
+        for name, err in failed_files:
+            st.caption(f"• {name}: {err[:100]}")
+    
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
