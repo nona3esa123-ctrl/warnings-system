@@ -2,10 +2,12 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from utils.sheets import read_tab, append_row, log_action
-from utils.drive import list_student_files, read_excel_from_drive
+from utils.drive import (
+    list_student_files, list_converted_sheets,
+    read_excel_from_drive, read_sheet_by_id
+)
 
 
-# خريطة أعمدة ملف الطلاب (مبنية على ترتيب الأعمدة في الملف)
 COL_MAP = {
     "عدد الانذارات المنفصله": 2,
     "ساعات الاجتياز": 4,
@@ -20,39 +22,87 @@ COL_MAP = {
 }
 
 
+def _safe_str(val):
+    """تحويل آمن للقيم إلى نص"""
+    if val is None:
+        return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except Exception:
+        pass
+    s = str(val).strip()
+    if s.lower() == "nan":
+        return ""
+    return s
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def load_all_students():
-    """تحميل جميع الطلاب من كل ملفات Excel في المجلد (مع تجاهل الملفات الفاشلة)"""
-    files = list_student_files()
+    """تحميل الطلاب: يفضّل Google Sheets إن وُجدت، وإلا يستخدم Excel"""
+    excel_files = list_student_files()
+    converted = {f['name']: f for f in list_converted_sheets()}
+    
     rows = []
-    failed_files = []
+    failed = []
+    stats = {"sheets": 0, "excel": 0}
     
-    for f in files:
-        try:
-            df = read_excel_from_drive(f['id'])
-            for _, row in df.iterrows():
-                student = {}
-                for name, idx in COL_MAP.items():
-                    try:
-                        val = row.iloc[idx] if idx < len(row) else ""
-                        if pd.isna(val):
-                            val = ""
-                        student[name] = val
-                    except Exception:
-                        student[name] = ""
-                if str(student.get("الرقم القومى", "")).strip() not in ("", "nan"):
-                    student["_file_name"] = f['name']
-                    student["_file_id"] = f['id']
-                    rows.append(student)
-        except Exception as e:
-            failed_files.append((f['name'], str(e)))
+    for excel in excel_files:
+        base_name = excel['name']
+        for ext in ['.xlsx', '.xls', '.XLSX', '.XLS']:
+            base_name = base_name.replace(ext, '')
+        gs_name = f"GS_{base_name}"
+        
+        df = None
+        source_type = None
+        
+        # 1) جرب Google Sheets أولاً
+        if gs_name in converted:
+            try:
+                df = read_sheet_by_id(converted[gs_name]['id'])
+                source_type = "sheets"
+            except Exception as e:
+                failed.append((gs_name, f"Sheets: {str(e)[:80]}"))
+        
+        # 2) إذا فشل، استخدم Excel الأصلي
+        if df is None:
+            try:
+                df = read_excel_from_drive(excel['id'])
+                source_type = "excel"
+            except Exception as e:
+                failed.append((excel['name'], f"Excel: {str(e)[:80]}"))
+                continue
+        
+        if df is None or df.empty:
             continue
+        
+        stats[source_type] = stats.get(source_type, 0) + 1
+        
+        # معالجة الصفوف
+        for _, row in df.iterrows():
+            student = {}
+            for name, idx in COL_MAP.items():
+                try:
+                    val = row.iloc[idx] if idx < len(row) else ""
+                    student[name] = _safe_str(val)
+                except Exception:
+                    student[name] = ""
+            
+            if student.get("الرقم القومى", "").strip():
+                student["_file_name"] = excel['name']
+                student["_source"] = source_type
+                rows.append(student)
     
-    # عرض تحذير بالملفات التي فشلت
-    if failed_files:
-        st.warning(f"⚠️ تعذّر تحميل {len(failed_files)} ملف (سيُعاد المحاولة تلقائياً):")
-        for name, err in failed_files:
-            st.caption(f"• {name}: {err[:100]}")
+    # عرض معلومات المصدر
+    if stats["sheets"] > 0:
+        st.success(f"⚡ تم تحميل {stats['sheets']} ملف من Google Sheets (سريع)")
+    if stats["excel"] > 0:
+        st.info(f"📄 تم تحميل {stats['excel']} ملف من Excel (يمكن تحويله لـ Sheets لتسريعه)")
+    
+    if failed:
+        with st.expander(f"⚠️ {len(failed)} ملف فشل تحميله"):
+            for name, err in failed:
+                st.caption(f"• {name}: {err}")
     
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
@@ -103,24 +153,18 @@ def sign_warning(national_id: str):
 
 
 def generate_warning_statement(student, signature=None) -> str:
-    """توليد بيان إنذار رسمي قابل للطباعة"""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    
-    # عدد الإنذارات
     try:
         warnings_count = int(float(str(student.get("عدد الانذارات المنفصله", 0))))
     except (ValueError, TypeError):
         warnings_count = 0
     
-    # حالة التوقيع
     if signature is not None:
-        sign_status = f"✅ تم العلم بالإنذار بتاريخ: {signature['التاريخ']}"
         sign_status_plain = f"تم العلم بالإنذار بتاريخ: {signature['التاريخ']}"
     else:
-        sign_status = "⏳ لم يتم التوقيع على علم الإنذار بعد"
         sign_status_plain = "لم يتم التوقيع على علم الإنذار بعد"
     
-    statement = f"""
+    return f"""
 ================================================================
                      كلية علوم الرياضة - بنين
 ================================================================
@@ -165,4 +209,3 @@ def generate_warning_statement(student, signature=None) -> str:
               جميع الحقوق محفوظة © كلية علوم الرياضة بنين
 ================================================================
 """
-    return statement
