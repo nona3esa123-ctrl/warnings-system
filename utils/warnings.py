@@ -54,7 +54,6 @@ def load_all_students():
         for raw_row in raw_values[8:]:  # الصف 9 فما فوق
             if not raw_row:
                 continue
-            # استخراج الرقم القومي للتحقق
             try:
                 nid = _safe(raw_row[15]) if len(raw_row) > 15 else ""
             except Exception:
@@ -113,14 +112,13 @@ def generate_student_html(rows_df, signature=None):
     """توليد HTML كامل لبيان الطالب (جاهز للطباعة كـ PDF)"""
     if rows_df.empty:
         return ""
-    
+
     first = rows_df.iloc[0]
     student_name = html.escape(str(first.get("اسم الطالب", "")))
     student_code = html.escape(str(first.get("كود الطالب", "")))
     national_id = html.escape(str(first.get("الرقم القومي", "")))
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    
-    # تحقق إن كان فيه أي إنذار أكبر من صفر
+
     total_warnings = 0
     for _, r in rows_df.iterrows():
         try:
@@ -128,8 +126,7 @@ def generate_student_html(rows_df, signature=None):
         except (ValueError, TypeError):
             pass
     has_warnings = total_warnings > 0
-    
-    # حالة التوقيع
+
     if signature is not None:
         sign_html = f"""
         <div class="info-box" style="background:#d1fae5; color:#065f46;">
@@ -139,8 +136,7 @@ def generate_student_html(rows_df, signature=None):
         """
     else:
         sign_html = '<div class="info-box" style="background:#fef3c7; color:#92400e;"><b>حالة العلم بالإنذار:</b> ⏳ لم يتم التوقيع بعد</div>'
-    
-    # بناء جدول الصفوف
+
     table_rows = ""
     for _, r in rows_df.iterrows():
         table_rows += f"""
@@ -154,8 +150,7 @@ def generate_student_html(rows_df, signature=None):
             <td>{html.escape(str(r.get('_file', '')))}</td>
         </tr>
         """
-    
-    # رسالة التوجيه
+
     alert_html = ""
     if has_warnings:
         alert_html = """
@@ -165,7 +160,7 @@ def generate_student_html(rows_df, signature=None):
             مع ضرورة إحضار نسخة من إثبات الشخصية وبيان الإنذار مطبوعاً.
         </div>
         """
-    
+
     return f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -173,9 +168,9 @@ def generate_student_html(rows_df, signature=None):
 <title>بيان إنذار - {student_name}</title>
 <style>
     * {{ font-family: 'Segoe UI', 'Tahoma', 'Arial', sans-serif; box-sizing: border-box; }}
-    body {{ padding: 20px; max-width: 1100px; margin: auto; color: #1a3a5c; }}
-    h1 {{ text-align: center; color: #2b7a62; border-bottom: 3px double #2b7a62; padding-bottom: 10px; margin-bottom: 5px; }}
-    h2 {{ text-align: center; color: #1a3a5c; margin-top: 5px; }}
+    body {{ padding: 20px; max-width: 1100px; margin: auto; color: #1a3a5c; background: white; }}
+    h1 {{ text-align: center; color: #2b7a62; border-bottom: 3px double #2b7a62; padding-bottom: 10px; margin-bottom: 5px; font-size: 22px; }}
+    h2 {{ text-align: center; color: #1a3a5c; margin-top: 5px; font-size: 18px; }}
     table {{ width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; }}
     th {{ background: #2b7a62; color: white; padding: 10px 8px; border: 1px solid #1a3a5c; }}
     td {{ padding: 8px; border: 1px solid #cbd5e1; text-align: center; }}
@@ -188,23 +183,21 @@ def generate_student_html(rows_df, signature=None):
     @media print {{
         body {{ padding: 0; }}
         .no-print {{ display: none !important; }}
-        table {{ page-break-inside: auto; }}
-        tr {{ page-break-inside: avoid; }}
     }}
 </style>
 </head>
 <body>
     <button class="print-btn no-print" onclick="window.print()">🖨️ طباعة / حفظ كـ PDF</button>
-    
+
     <h1>كلية علوم الرياضة - بنين</h1>
     <h2>بيان إنذارات أكاديمية</h2>
-    
+
     <div class="info-box">
         <b>الاسم:</b> {student_name} &nbsp;|&nbsp; <b>كود الطالب:</b> {student_code} &nbsp;|&nbsp; <b>الرقم القومي:</b> {national_id}
         <br><b>تاريخ الطباعة:</b> {now}
         <br><b>عدد الصفوف:</b> {len(rows_df)}
     </div>
-    
+
     <table>
         <thead>
             <tr>
@@ -221,15 +214,15 @@ def generate_student_html(rows_df, signature=None):
             {table_rows}
         </tbody>
     </table>
-    
+
     {sign_html}
     {alert_html}
-    
+
     <div class="footer">
         جميع الحقوق محفوظة © كلية علوم الرياضة بنين<br>
         هذا البيان صادر إلكترونياً من نظام متابعة الإنذارات
     </div>
-    
+
     <button class="print-btn no-print" onclick="window.print()">🖨️ طباعة / حفظ كـ PDF</button>
 </body>
 </html>"""
