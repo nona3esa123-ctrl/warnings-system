@@ -31,7 +31,6 @@ def get_drive_service():
 
 @st.cache_resource
 def get_system_spreadsheet():
-    """فتح ملف 'بيانات_النظام' (يُفترض أنه موجود مسبقاً)"""
     folder_id = st.secrets["settings"]["folder_id"]
     drive = get_drive_service()
     results = drive.files().list(
@@ -57,7 +56,6 @@ def _get_worksheet(tab_name):
 
 
 def read_tab(tab_name):
-    """قراءة ورقة كاملة كـ DataFrame"""
     try:
         ws = _get_worksheet(tab_name)
         if ws is None:
@@ -70,7 +68,6 @@ def read_tab(tab_name):
 
 
 def append_row(tab_name, row_dict):
-    """إضافة صف جديد"""
     try:
         ws = _get_worksheet(tab_name)
         if ws is None:
@@ -84,7 +81,6 @@ def append_row(tab_name, row_dict):
 
 
 def update_row(tab_name, row_index, row_dict):
-    """تحديث صف موجود (row_index يبدأ من 2)"""
     try:
         ws = _get_worksheet(tab_name)
         if ws is None:
@@ -98,7 +94,6 @@ def update_row(tab_name, row_index, row_dict):
 
 
 def delete_row(tab_name, row_index):
-    """حذف صف"""
     try:
         ws = _get_worksheet(tab_name)
         if ws is None:
@@ -111,7 +106,6 @@ def delete_row(tab_name, row_index):
 
 
 def log_action(action_type, target="", details=""):
-    """تسجيل عملية في سجل النشاط"""
     try:
         user = st.session_state.get("user")
         append_row("audit", {
