@@ -1,6 +1,8 @@
 import streamlit as st
 from utils.auth import init_session, authenticate, create_default_admin
-from utils.warnings import find_student, get_signature, sign_warning, generate_warning_statement
+from utils.warnings import (
+    find_all_student_rows, get_signature, sign_warning, generate_student_html
+)
 
 st.set_page_config(page_title="نظام الإنذارات", page_icon="📘", layout="wide")
 init_session()
@@ -26,6 +28,7 @@ st.markdown("""
     .error-box { background:#fee2e2; color:#991b1b; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin:10px 0;}
     .warning-box { background:#fef3c7; color:#92400e; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin:10px 0;}
     .info-card { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; padding: 15px; margin: 8px 0;}
+    .warnings-badge { background:#fee2e2; border:2px solid #e53e3e; border-radius:10px; padding:20px; text-align:center; margin:15px 0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -45,63 +48,56 @@ tab1, tab2 = st.tabs(["🔍 عرض بياناتي (طالب)", "🖊️ تسجي
 
 # ============ تبويب الطالب ============
 with tab1:
-    st.markdown("### 🔍 أدخل رقمك القومي لعرض بياناتك")
+    st.markdown("### 🔍 أدخل رقمك القومي")
     col1, col2 = st.columns([4, 1])
     with col1:
         student_id = st.text_input(
             "الرقم القومي",
             max_chars=14,
-            placeholder="أدخل الرقم القومي (14 رقم)",
+            placeholder="الرقم القومي (14 رقم)",
             label_visibility="collapsed"
         )
     with col2:
-        search_btn = st.button("🔍 عرض بياناتي", use_container_width=True, key="search_student")
+        search_btn = st.button("🔍 عرض بياناتي", use_container_width=True)
 
     if search_btn:
         if not student_id:
             st.warning("⚠️ الرجاء إدخال الرقم القومي")
         else:
             with st.spinner("جاري البحث..."):
-                student = find_student(student_id)
+                rows = find_all_student_rows(student_id)
                 signature = get_signature(student_id)
             
-            if student is None:
+            if rows.empty:
                 st.markdown('<div class="error-box">⚠️ لم يتم العثور على طالب بهذا الرقم القومي</div>', unsafe_allow_html=True)
             else:
-                # عدد الإنذارات
-                try:
-                    warnings_count = int(float(str(student.get("عدد الانذارات المنفصله", 0))))
-                except (ValueError, TypeError):
-                    warnings_count = 0
+                first = rows.iloc[0]
+                st.markdown(f"### 📄 {first.get('اسم الطالب', '')}")
                 
-                st.markdown(f"### 📄 بيانات الطالب: {student.get('اسم الطالب', '')}")
+                # إجمالي الإنذارات
+                total_w = 0
+                for _, r in rows.iterrows():
+                    try:
+                        total_w += int(float(r.get("عدد الإنذارات", 0) or 0))
+                    except (ValueError, TypeError):
+                        pass
                 
-                # البيانات الأساسية
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown(f'<div class="info-card"><b>كود الطالب:</b> {student.get("كود الطالب", "")}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="info-card"><b>الرقم القومي:</b> {student.get("الرقم القومى", "")}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="info-card"><b>المستوى:</b> {student.get("المستوى", "")}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="info-card"><b>القسم/ الشعبة:</b> {student.get("القسم/ الشعبة", "")}</div>', unsafe_allow_html=True)
-                with c2:
-                    st.markdown(f'<div class="info-card"><b>اللائحة:</b> {student.get("اللائحه", "")}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="info-card"><b>ساعات الاجتياز:</b> {student.get("ساعات الاجتياز", "")}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="info-card"><b>تراكمى الفصل:</b> {student.get("تراكمى الفصل", "")}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="info-card"><b>تراكمى الطالب:</b> {student.get("تراكمى الطالب", "")}</div>', unsafe_allow_html=True)
+                # عرض الصفوف في جدول
+                st.markdown(f"#### 📊 بيانات عبر {len(rows)} مستوى")
                 
-                # عدد الإنذارات - بارز
-                if warnings_count > 0:
-                    st.markdown(f"""
-                    <div style="background:#fee2e2; border:2px solid #e53e3e; border-radius:10px; padding:20px; text-align:center; margin:15px 0;">
-                        <h2 style="color:#991b1b; margin:0;">⚠️ عدد الإنذارات: {warnings_count}</h2>
+                display_df = rows[["المستوى", "القسم/ الشعبة", "ساعات الاجتياز", "تراكمى الفصل", "تراكمى الطالب", "عدد الإنذارات", "_file"]].copy()
+                display_df.columns = ["المستوى", "الشعبة", "ساعات الاجتياز", "تراكمي الفصل", "تراكمي الطالب", "عدد الإنذارات", "المصدر"]
+                st.dataframe(display_df, use_container_width=True)
+                
+                # عدد الإنذارات الإجمالي
+                if total_w > 0:
+                    st.markdown(f'''
+                    <div class="warnings-badge">
+                        <h2 style="color:#991b1b; margin:0;">⚠️ إجمالي الإنذارات: {total_w}</h2>
                     </div>
-                    """, unsafe_allow_html=True)
+                    ''', unsafe_allow_html=True)
                 else:
-                    st.markdown(f"""
-                    <div style="background:#d1fae5; border:2px solid #10b981; border-radius:10px; padding:15px; text-align:center; margin:15px 0;">
-                        <h3 style="color:#065f46; margin:0;">✅ لا يوجد إنذارات</h3>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown('<div class="success-box">✅ لا توجد إنذارات</div>', unsafe_allow_html=True)
                 
                 # حالة التوقيع
                 if signature is not None:
@@ -109,41 +105,46 @@ with tab1:
                 else:
                     st.markdown('<div class="warning-box">⏳ لم يتم التوقيع على علم الإنذار بعد</div>', unsafe_allow_html=True)
                 
-                # ============ زر حفظ / طباعة البيان ============
-                st.markdown("---")
-                st.markdown("### 📥 حفظ / طباعة بيان الإنذار")
-                st.caption("يمكنك تحميل البيان وطباعته لتسليمه للإرشاد الأكاديمي.")
-                
-                statement_text = generate_warning_statement(student, signature)
-                file_name = f"بيان_إنذار_{student.get('كود الطالب', student_id)}.txt"
-                
-                col_dl1, col_dl2 = st.columns(2)
-                with col_dl1:
-                    st.download_button(
-                        label="📥 تحميل البيان (TXT)",
-                        data=statement_text.encode("utf-8-sig"),
-                        file_name=file_name,
-                        mime="text/plain",
-                        use_container_width=True
-                    )
-                with col_dl2:
-                    st.caption("💡 **للطباعة كـ PDF**: افتح الملف ثم اختر (طباعة) واختر (حفظ كـ PDF).")
-                
-                # معاينة البيان
-                with st.expander("👁️ معاينة البيان"):
-                    st.text(statement_text)
-                
-                # رسالة التوجيه (فقط إذا كان عدد الإنذارات > 0)
-                if warnings_count > 0:
+                # رسالة التوجيه
+                if total_w > 0:
                     st.markdown("""
                     <div class="student-alert">
                         <h3>📢 تنبيه هام</h3>
                         <p style="font-size:18px;">
                         برجاء التوجه للإرشاد الأكاديمي لفك الحظر،<br>
-                        مع ضرورة إحضار نسخة من إثبات الشخصية وبيان الإنذار مطبوعاً.
+                        مع ضرورة إحضار نسخة من إثبات الشخصية.
                         </p>
                     </div>
                     """, unsafe_allow_html=True)
+                
+                # ============ طباعة / تحميل البيان ============
+                st.markdown("---")
+                st.markdown("### 🖨️ طباعة البيان / حفظ PDF")
+                st.caption("اضغط 'فتح للطباعة' → سيفتح البيان في نافذة جديدة → اختر طباعة → اختر 'Save as PDF'.")
+                
+                html_content = generate_student_html(rows, signature)
+                file_name = f"بيان_إنذار_{first.get('كود الطالب', student_id)}.html"
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.download_button(
+                        "📥 تحميل البيان (HTML)",
+                        data=html_content.encode("utf-8"),
+                        file_name=file_name,
+                        mime="text/html",
+                        use_container_width=True
+                    )
+                with c2:
+                    st.markdown(
+                        f'<a href="data:text/html;charset=utf-8,{html_content}" target="_blank" '
+                        f'style="display:block; background:#2b7a62; color:white; padding:11px 20px; '
+                        f'border-radius:8px; text-align:center; text-decoration:none; font-weight:bold;">'
+                        f'🖨️ فتح للطباعة</a>',
+                        unsafe_allow_html=True
+                    )
+                
+                with st.expander("👁️ معاينة البيان"):
+                    st.components.v1.html(html_content, height=600, scrolling=True)
 
 # ============ تبويب الموظف ============
 with tab2:
@@ -167,9 +168,9 @@ with tab2:
         st.markdown(f"**الدور:** {user['role']}")
         
         st.markdown("---")
-        st.markdown("#### 🖊️ تسجيل توقيع طالب على الإنذار")
+        st.markdown("#### 🖊️ تسجيل توقيع طالب")
         sid = st.text_input("الرقم القومي للطالب", max_chars=14, key="sign_id")
-        if st.button("✅ تسجيل توقيع الطالب", use_container_width=True, key="sign_btn"):
+        if st.button("✅ تسجيل توقيع الطالب", use_container_width=True):
             if not sid:
                 st.warning("⚠️ أدخل الرقم القومي")
             else:
@@ -181,8 +182,6 @@ with tab2:
                     st.balloons()
         
         st.markdown("---")
-        st.markdown("### 📋 الروابط السريعة")
-        
         c1, c2 = st.columns(2)
         with c1:
             if user["role"] == "مدير":
