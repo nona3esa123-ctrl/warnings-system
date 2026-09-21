@@ -12,7 +12,7 @@ SCOPES = [
 
 
 @st.cache_resource
-def get_creds():
+def _get_creds():
     return Credentials.from_service_account_info(
         dict(st.secrets["gcp_service_account"]),
         scopes=SCOPES
@@ -21,70 +21,33 @@ def get_creds():
 
 @st.cache_resource
 def get_gspread_client():
-    return gspread.authorize(get_creds())
+    return gspread.authorize(_get_creds())
 
 
 @st.cache_resource
 def get_drive_service():
-    return build('drive', 'v3', credentials=get_creds())
+    return build('drive', 'v3', credentials=_get_creds())
 
 
-def get_or_create_system_file():
-    """الحصول على ملف 'بيانات_النظام' أو إنشاؤه تلقائياً"""
+@st.cache_resource
+def get_system_spreadsheet():
+    """فتح ملف 'بيانات_النظام' (يُفترض أنه موجود مسبقاً)"""
     folder_id = st.secrets["settings"]["folder_id"]
-    client = get_gspread_client()
     drive = get_drive_service()
-
-    # البحث عن الملف في المجلد
-    try:
-        results = drive.files().list(
-            q=f"name='بيانات_النظام' and '{folder_id}' in parents and trashed=false",
-            fields="files(id, name)",
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True
-        ).execute()
-        files = results.get('files', [])
-        if files:
-            return client.open_by_key(files[0]['id'])
-    except Exception as e:
-        st.error(f"خطأ في البحث عن الملف: {e}")
+    results = drive.files().list(
+        q=f"name='بيانات_النظام' and '{folder_id}' in parents and trashed=false",
+        fields="files(id)",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True
+    ).execute()
+    files = results.get('files', [])
+    if not files:
         return None
-
-    # إنشاء ملف Sheets جديد مباشرة في المجلد (باستخدام Drive API)
-    try:
-        file_metadata = {
-            'name': 'بيانات_النظام',
-            'mimeType': 'application/vnd.google-apps.spreadsheet',
-            'parents': [folder_id]
-        }
-        new_file = drive.files().create(
-            body=file_metadata,
-            fields='id',
-            supportsAllDrives=True
-        ).execute()
-
-        file_id = new_file.get('id')
-        new_ss = client.open_by_key(file_id)
-
-        # إعداد الأوراق
-        sheet1 = new_ss.sheet1
-        sheet1.update_title("users")
-        sheet1.append_row(["الإيميل", "كلمة المرور", "الاسم", "الدور"])
-
-        ws_audit = new_ss.add_worksheet(title="audit", rows=1000, cols=10)
-        ws_audit.append_row(["التاريخ", "الإيميل", "الاسم", "نوع العملية", "الهدف", "التفاصيل"])
-
-        ws_sig = new_ss.add_worksheet(title="signatures", rows=1000, cols=10)
-        ws_sig.append_row(["الرقم القومي", "التاريخ", "الموظف", "ملاحظات"])
-
-        return new_ss
-    except Exception as e:
-        st.error(f"خطأ في إنشاء الملف: {e}")
-        return None
+    return get_gspread_client().open_by_key(files[0]['id'])
 
 
-def get_system_tab(tab_name):
-    ss = get_or_create_system_file()
+def _get_worksheet(tab_name):
+    ss = get_system_spreadsheet()
     if ss is None:
         return None
     try:
@@ -94,8 +57,9 @@ def get_system_tab(tab_name):
 
 
 def read_tab(tab_name):
+    """قراءة ورقة كاملة كـ DataFrame"""
     try:
-        ws = get_system_tab(tab_name)
+        ws = _get_worksheet(tab_name)
         if ws is None:
             return pd.DataFrame()
         data = ws.get_all_records()
@@ -106,13 +70,13 @@ def read_tab(tab_name):
 
 
 def append_row(tab_name, row_dict):
+    """إضافة صف جديد"""
     try:
-        ws = get_system_tab(tab_name)
+        ws = _get_worksheet(tab_name)
         if ws is None:
             return False
         headers = ws.row_values(1)
-        row = [row_dict.get(h, "") for h in headers]
-        ws.append_row(row)
+        ws.append_row([row_dict.get(h, "") for h in headers])
         return True
     except Exception as e:
         st.error(f"خطأ في الإضافة: {e}")
@@ -120,13 +84,13 @@ def append_row(tab_name, row_dict):
 
 
 def update_row(tab_name, row_index, row_dict):
+    """تحديث صف موجود (row_index يبدأ من 2)"""
     try:
-        ws = get_system_tab(tab_name)
+        ws = _get_worksheet(tab_name)
         if ws is None:
             return False
         headers = ws.row_values(1)
-        row = [row_dict.get(h, "") for h in headers]
-        ws.update(f"A{row_index}", [row])
+        ws.update(f"A{row_index}", [[row_dict.get(h, "") for h in headers]])
         return True
     except Exception as e:
         st.error(f"خطأ في التحديث: {e}")
@@ -134,8 +98,9 @@ def update_row(tab_name, row_index, row_dict):
 
 
 def delete_row(tab_name, row_index):
+    """حذف صف"""
     try:
-        ws = get_system_tab(tab_name)
+        ws = _get_worksheet(tab_name)
         if ws is None:
             return False
         ws.delete_rows(row_index)
@@ -146,6 +111,7 @@ def delete_row(tab_name, row_index):
 
 
 def log_action(action_type, target="", details=""):
+    """تسجيل عملية في سجل النشاط"""
     try:
         user = st.session_state.get("user")
         append_row("audit", {
