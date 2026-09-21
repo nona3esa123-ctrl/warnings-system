@@ -27,7 +27,6 @@ st.markdown("""
     .success-box { background:#d1fae5; color:#065f46; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin:10px 0;}
     .error-box { background:#fee2e2; color:#991b1b; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin:10px 0;}
     .warning-box { background:#fef3c7; color:#92400e; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin:10px 0;}
-    .info-card { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; padding: 15px; margin: 8px 0;}
     .warnings-badge { background:#fee2e2; border:2px solid #e53e3e; border-radius:10px; padding:20px; text-align:center; margin:15px 0; }
 </style>
 """, unsafe_allow_html=True)
@@ -82,12 +81,12 @@ with tab1:
                     except (ValueError, TypeError):
                         pass
                 
-                # عرض الصفوف في جدول
+                # عرض الصفوف
                 st.markdown(f"#### 📊 بيانات عبر {len(rows)} مستوى")
                 
                 display_df = rows[["المستوى", "القسم/ الشعبة", "ساعات الاجتياز", "تراكمى الفصل", "تراكمى الطالب", "عدد الإنذارات", "_file"]].copy()
                 display_df.columns = ["المستوى", "الشعبة", "ساعات الاجتياز", "تراكمي الفصل", "تراكمي الطالب", "عدد الإنذارات", "المصدر"]
-                st.dataframe(display_df, use_container_width=True)
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
                 
                 # عدد الإنذارات الإجمالي
                 if total_w > 0:
@@ -117,34 +116,14 @@ with tab1:
                     </div>
                     """, unsafe_allow_html=True)
                 
-                # ============ طباعة / تحميل البيان ============
+                # ============ طباعة البيان ============
                 st.markdown("---")
-                st.markdown("### 🖨️ طباعة البيان / حفظ PDF")
-                st.caption("اضغط 'فتح للطباعة' → سيفتح البيان في نافذة جديدة → اختر طباعة → اختر 'Save as PDF'.")
+                st.markdown("### 🖨️ طباعة البيان")
+                st.caption("اضغط الزر → سيظهر حوار الطباعة → اختر **Save as PDF** أو الطابعة.")
                 
                 html_content = generate_student_html(rows, signature)
-                file_name = f"بيان_إنذار_{first.get('كود الطالب', student_id)}.html"
-                
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.download_button(
-                        "📥 تحميل البيان (HTML)",
-                        data=html_content.encode("utf-8"),
-                        file_name=file_name,
-                        mime="text/html",
-                        use_container_width=True
-                    )
-                with c2:
-                    st.markdown(
-                        f'<a href="data:text/html;charset=utf-8,{html_content}" target="_blank" '
-                        f'style="display:block; background:#2b7a62; color:white; padding:11px 20px; '
-                        f'border-radius:8px; text-align:center; text-decoration:none; font-weight:bold;">'
-                        f'🖨️ فتح للطباعة</a>',
-                        unsafe_allow_html=True
-                    )
-                
-                with st.expander("👁️ معاينة البيان"):
-                    st.components.v1.html(html_content, height=600, scrolling=True)
+                # عرض البيان مباشرة (سيظهر مع زر طباعة داخلي + يفتح حوار الطباعة تلقائياً)
+                st.components.v1.html(html_content, height=850, scrolling=True)
 
 # ============ تبويب الموظف ============
 with tab2:
